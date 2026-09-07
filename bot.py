@@ -54,8 +54,9 @@ PRICE_CHANGE_ALERT_PCT = float(os.environ.get("PRICE_CHANGE_ALERT_PCT", "20"))  
 NEW_PAIR_MIN_LIQUIDITY_USD = float(os.environ.get("NEW_PAIR_MIN_LIQUIDITY_USD", "10000"))
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "180"))
 
-# Kriteria filter /gems (low market cap + volume tinggi relatif ke market cap)
-GEMS_MAX_MARKET_CAP_USD = float(os.environ.get("GEMS_MAX_MARKET_CAP_USD", "1000000"))  # di bawah $1jt
+# Kriteria filter /gems (market cap di rentang tertentu + volume tinggi relatif ke market cap)
+GEMS_MIN_MARKET_CAP_USD = float(os.environ.get("GEMS_MIN_MARKET_CAP_USD", "500000"))   # $500rb
+GEMS_MAX_MARKET_CAP_USD = float(os.environ.get("GEMS_MAX_MARKET_CAP_USD", "1000000"))  # $1jt
 GEMS_MIN_LIQUIDITY_USD = float(os.environ.get("GEMS_MIN_LIQUIDITY_USD", "15000"))
 GEMS_MIN_VOLUME_TO_MCAP_RATIO = float(os.environ.get("GEMS_MIN_VOLUME_TO_MCAP_RATIO", "0.3"))  # vol24h >= 30% mcap
 
@@ -332,7 +333,8 @@ async def new_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def gems_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🔎 Mencari token dengan market cap kecil & volume trading tinggi...\n"
+        f"🔎 Mencari token dengan market cap ${GEMS_MIN_MARKET_CAP_USD:,.0f}–${GEMS_MAX_MARKET_CAP_USD:,.0f} "
+        "& volume trading tinggi...\n"
         "⚠️ Ini BUKAN prediksi harga naik, cuma filter pola likuiditas & volume."
     )
     try:
@@ -349,7 +351,9 @@ async def gems_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chg1h = p.get("priceChange", {}).get("h1", 0) or 0
         chg24h = p.get("priceChange", {}).get("h24", 0) or 0
 
-        if not mcap or mcap <= 0 or mcap > GEMS_MAX_MARKET_CAP_USD:
+        if not mcap or mcap <= 0:
+            continue
+        if mcap < GEMS_MIN_MARKET_CAP_USD or mcap > GEMS_MAX_MARKET_CAP_USD:
             continue
         if liq < GEMS_MIN_LIQUIDITY_USD:
             continue
