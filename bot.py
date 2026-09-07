@@ -54,6 +54,11 @@ PRICE_CHANGE_ALERT_PCT = float(os.environ.get("PRICE_CHANGE_ALERT_PCT", "20"))  
 NEW_PAIR_MIN_LIQUIDITY_USD = float(os.environ.get("NEW_PAIR_MIN_LIQUIDITY_USD", "10000"))
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "180"))
 
+# Kriteria filter /gems (low market cap + volume tinggi relatif ke market cap)
+GEMS_MAX_MARKET_CAP_USD = float(os.environ.get("GEMS_MAX_MARKET_CAP_USD", "1000000"))  # di bawah $1jt
+GEMS_MIN_LIQUIDITY_USD = float(os.environ.get("GEMS_MIN_LIQUIDITY_USD", "15000"))
+GEMS_MIN_VOLUME_TO_MCAP_RATIO = float(os.environ.get("GEMS_MIN_VOLUME_TO_MCAP_RATIO", "0.3"))  # vol24h >= 30% mcap
+
 DB_PATH = os.environ.get("DB_PATH", "watchlist.db")
 
 DISCLAIMER = (
@@ -242,6 +247,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/list - daftar token yang dipantau\n"
         "/check <contract> - cek harga, likuiditas & rug-check cepat\n"
         "/new - pair baru dgn likuiditas signifikan\n"
+        "/gems - token mcap kecil + volume tinggi (BUKAN prediksi harga naik)\n"
         "/news - rekap berita Robinhood Chain terbaru"
         + DISCLAIMER,
         parse_mode="Markdown",
@@ -321,6 +327,59 @@ async def new_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             disable_web_page_preview=True,
         )
+        await asyncio.sleep(0.3)
+
+
+async def gems_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🔎 Mencari token dengan market cap kecil & volume trading tinggi...\n"
+        "⚠️ Ini BUKAN prediksi harga naik, cuma filter pola likuiditas & volume."
+    )
+    try:
+        pairs = fetch_new_pairs_search()
+    except Exception as e:
+        await update.message.reply_text(f"Gagal ambil data: {e}")
+        return
+
+    candidates = []
+    for p in pairs:
+        liq = p.get("liquidity", {}).get("usd", 0) or 0
+        mcap = p.get("marketCap") or p.get("fdv") or 0
+        vol24h = p.get("volume", {}).get("h24", 0) or 0
+        chg1h = p.get("priceChange", {}).get("h1", 0) or 0
+        chg24h = p.get("priceChange", {}).get("h24", 0) or 0
+
+        if not mcap or mcap <= 0 or mcap > GEMS_MAX_MARKET_CAP_USD:
+            continue
+        if liq < GEMS_MIN_LIQUIDITY_USD:
+            continue
+        vol_to_mcap = vol24h / mcap if mcap > 0 else 0
+        if vol_to_mcap < GEMS_MIN_VOLUME_TO_MCAP_RATIO:
+            continue
+        # cari yang momentumnya positif di 1h & 24h (bukan cuma nyangkut, tapi bukan kepastian juga)
+        if chg1h <= 0 or chg24h <= 0:
+            continue
+
+        candidates.append((p, vol_to_mcap))
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    candidates = candidates[:5]
+
+    if not candidates:
+        await update.message.reply_text(
+            "Belum ada token yang cocok kriteria saat ini (mcap kecil + volume tinggi + momentum positif). "
+            "Coba lagi beberapa saat lagi."
+        )
+        return
+
+    for p, ratio in candidates:
+        mcap = p.get("marketCap") or p.get("fdv") or 0
+        text = (
+            format_pair_summary(p)
+            + f"\nMarket Cap: ${mcap:,.0f} | Vol24h/MCap: {ratio:.2f}x"
+            + DISCLAIMER
+        )
+        await update.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True)
         await asyncio.sleep(0.3)
 
 
@@ -426,6 +485,7 @@ def main():
     app.add_handler(CommandHandler("list", list_cmd))
     app.add_handler(CommandHandler("check", check_cmd))
     app.add_handler(CommandHandler("new", new_cmd))
+    app.add_handler(CommandHandler("gems", gems_cmd))
     app.add_handler(CommandHandler("news", news_cmd))
 
     app.job_queue.run_repeating(poll_watchlist, interval=POLL_INTERVAL_SECONDS, first=15)
